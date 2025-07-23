@@ -17,7 +17,7 @@
         }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
 
     <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-8 space-y-6">
         
@@ -40,11 +40,20 @@
                 </label>
             </div>
         </div>
+        
+        <!-- ** NEW ** Important Note for Office 365 Users -->
+        <div class="mt-4 p-3 bg-yellow-100 border-r-4 border-yellow-500 text-yellow-800 rounded-lg" role="alert">
+            <p class="font-bold">ملاحظة هامة لمستخدمي أوفيس 365:</p>
+            <p class="text-sm">لضمان نجاح العملية، يجب فتح ملفك في وورد، ثم اختيار "ملف" > "حفظ نسخة" > "هذا الكمبيوتر" لحفظ نسخة محلية "نظيفة". استخدم هذه النسخة الجديدة في الأداة.</p>
+        </div>
 
         <!-- Step 2: Start Cracking -->
         <div class="text-center">
             <button id="start-button" class="w-full bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all shadow-md text-lg" disabled>
                 الخطوة 2: ابدأ البحث فائق السرعة
+            </button>
+            <button id="stop-button" class="w-full bg-red-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-red-700 transition-all shadow-md text-lg mt-4 hidden">
+                إيقاف البحث
             </button>
         </div>
 
@@ -78,6 +87,7 @@
 const fileUpload = document.getElementById('file-upload');
 const fileNameDisplay = document.getElementById('file-name');
 const startButton = document.getElementById('start-button');
+const stopButton = document.getElementById('stop-button');
 const statusContainer = document.getElementById('status-container');
 const statusMessage = document.getElementById('status-message');
 const progressBar = document.getElementById('progress-bar');
@@ -101,6 +111,7 @@ fileUpload.addEventListener('change', (event) => {
             fileNameDisplay.textContent = file.name;
             startButton.disabled = false;
             resultContainer.classList.add('hidden');
+            statusContainer.classList.add('hidden');
         } else {
             alert("الرجاء اختيار ملف بامتداد .docx فقط.");
             fileUpload.value = '';
@@ -113,7 +124,8 @@ startButton.addEventListener('click', async () => {
 
     // Reset state
     startButton.disabled = true;
-    startButton.textContent = "جاري البحث...";
+    startButton.classList.add('hidden');
+    stopButton.classList.remove('hidden');
     statusContainer.classList.remove('hidden');
     resultContainer.classList.add('hidden');
     passwordFound = false;
@@ -140,10 +152,21 @@ startButton.addEventListener('click', async () => {
 
     } catch (error) {
         statusMessage.textContent = `خطأ: ${error.message}`;
-        startButton.disabled = false;
-        startButton.textContent = "ابدأ البحث فائق السرعة";
+        resetUI();
     }
 });
+
+stopButton.addEventListener('click', () => {
+    statusMessage.textContent = 'تم إيقاف البحث من قبل المستخدم.';
+    terminateWorkers();
+    resetUI();
+});
+
+function resetUI() {
+    startButton.disabled = false;
+    startButton.classList.remove('hidden');
+    stopButton.classList.add('hidden');
+}
 
 function parseEncryptionInfo(xmlString) {
     const parser = new DOMParser();
@@ -174,7 +197,6 @@ function startCracking(encryptionInfo) {
     startTime = Date.now();
     statusMessage.textContent = `بدء البحث باستخدام ${numWorkers} من أنوية المعالج...`;
 
-    // Create worker code as a Blob
     const workerCode = `
         importScripts("https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js");
 
@@ -189,24 +211,16 @@ function startCracking(encryptionInfo) {
                 
                 try {
                     const passwordUtf16 = CryptoJS.enc.Utf16LE.parse(password);
-                    
                     const h = hasher(salt.clone().concat(passwordUtf16));
-                    
                     const key = CryptoJS.PBKDF2(h, CryptoJS.enc.Hex.parse('fea7d2763b4b9e79'), { keySize: 32/4, iterations: spinCount, hasher: hasher });
-                    
                     const verifierHashKey = CryptoJS.PBKDF2(key, CryptoJS.enc.Hex.parse('146e0be7abacd0d6'), { keySize: 32/4, iterations: 2, hasher: hasher });
-
                     const verifierKey16 = CryptoJS.lib.WordArray.create(verifierHashKey.words.slice(0, 4));
-
                     const decryptedVerifierHashInput = CryptoJS.AES.decrypt({ciphertext: encryptedVerifierHashInput}, verifierKey16, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.NoPadding });
-                    
                     const h_final = hasher(decryptedVerifierHashInput);
-                    
                     const decryptedVerifierHashValue = CryptoJS.AES.decrypt({ciphertext: encryptedVerifierHashValue}, verifierKey16, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.NoPadding });
+                    const finalHashWords = CryptoJS.lib.WordArray.create(h_final.words.slice(0, h_final.sigBytes / 4));
                     
-                    const finalHashWords = CryptoJS.lib.WordArray.create(h_final.words.slice(0, decryptedVerifierHashValue.words.length));
-                    
-                    if (finalHashWords.toString() === decryptedVerifierHashValue.toString()) {
+                    if (finalHashWords.toString() === decryptedVerifierHashValue.toString(CryptoJS.enc.Hex).substring(0, finalHashWords.toString().length)) {
                         postMessage({ status: 'found', password: password });
                         return;
                     }
@@ -215,9 +229,7 @@ function startCracking(encryptionInfo) {
                     // Wrong password, continue
                 }
                 
-                if (i % 100 === 0) { // Send progress update every 100 attempts
-                    postMessage({ status: 'progress', count: 100 });
-                }
+                postMessage({ status: 'progress', count: 1 });
             }
             postMessage({ status: 'done' });
         }
@@ -251,23 +263,31 @@ function handleWorkerMessage(data) {
         stats.textContent = `إجمالي المحاولات: ${checkedPasswords}`;
 
         terminateWorkers();
-        startButton.disabled = false;
-        startButton.textContent = "ابدأ بحثاً جديداً";
+        resetUI();
     } else if (data.status === 'progress') {
         updateProgress(data.count);
-    } else if (data.status === 'done') {
-        // A worker finished its chunk
+    } else if (data.status === 'done' && workers.length > 0) {
+        // A worker finished, check if all are done
+        if (workers.every(w => w.isDone)) {
+             if (!passwordFound) {
+                statusMessage.textContent = 'اكتمل البحث. لم يتم العثور على كلمة السر.';
+                resetUI();
+             }
+        }
     }
 }
 
 function updateProgress(count) {
+    if (passwordFound) return;
     checkedPasswords += count;
     const progress = (checkedPasswords / totalPasswords) * 100;
-    progressBar.style.width = `${progress}%`;
+    progressBar.style.width = `${Math.min(progress, 100)}%`;
 
     const elapsedTime = (Date.now() - startTime) / 1000;
-    const speed = Math.round(checkedPasswords / elapsedTime);
-    stats.textContent = `سرعة البحث: ${speed} كلمة سر/ثانية  |  المحاولات: ${checkedPasswords}/${totalPasswords}`;
+    if (elapsedTime > 0.5) { // Update speed only after a short delay
+        const speed = Math.round(checkedPasswords / elapsedTime);
+        stats.textContent = `سرعة البحث: ${speed} كلمة سر/ثانية  |  المحاولات: ${checkedPasswords}/${totalPasswords}`;
+    }
 }
 
 function terminateWorkers() {
